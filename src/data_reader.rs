@@ -88,4 +88,8 @@ impl<'a> DataReader<'a> {
         let o = self.advance_position(len)?;
         Ok(&self.data[o..o + len])
     }
+
+    pub fn more(&self) -> bool {
+        self.data.len() < self.pos
+    }
 }
