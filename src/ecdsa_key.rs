@@ -1,30 +1,24 @@
 use crate::data_reader::*;
-use crate::ssh_agent::{
-    append_parts,
-    SshIdentity,
-    SshSigningKey,
-};
+use crate::ssh_agent::{SshIdentity, SshSigningKey};
 
-use crate::error::Result;
+use crate::error::*;
+use crate::utils::*;
 
 use elliptic_curve::{
-    point::PointCompression,
     generic_array::ArrayLength,
     ops::Invert,
-    subtle::{CtOption},
+    point::PointCompression,
     sec1::{self, FromEncodedPoint, ToEncodedPoint},
-    CurveArithmetic, FieldBytesSize, PrimeCurve, Scalar,
-    AffinePoint,
+    subtle::CtOption,
+    AffinePoint, CurveArithmetic, FieldBytesSize, PrimeCurve, Scalar,
 };
 
 use ecdsa::{
-    SignatureSize,
-    Signature,
     hazmat::{DigestPrimitive, SignPrimitive},
+    Signature, SignatureSize, SigningKey,
 };
 
-use signature::{ Signer };
-
+use signature::Signer;
 
 pub struct EcDsaKey<C>
 where
@@ -33,30 +27,13 @@ where
     SignatureSize<C>: ArrayLength<u8>,
     AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
     FieldBytesSize<C>: sec1::ModulusSize,
-
 {
     key: ecdsa::SigningKey<C>,
+    id: Vec<u8>,
     curve: Vec<u8>,
-    curve_name: Vec<u8>,
 }
 
-impl<C> EcDsaKey<C> 
-where
-    C: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression,
-    Scalar<C>: Invert<Output = CtOption<Scalar<C>>> + SignPrimitive<C>,
-    SignatureSize<C>: ArrayLength<u8>,
-    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
-    FieldBytesSize<C>: sec1::ModulusSize, {
-        pub fn new(key: ecdsa::SigningKey<C>, curve:Vec<u8>, curve_name: Vec<u8>) -> Self {
-            Self {
-                key,
-                curve,
-                curve_name,
-            }
-        }
-}
-
-impl<C> SshSigningKey for EcDsaKey<C> 
+impl<C> EcDsaKey<C>
 where
     C: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression,
     Scalar<C>: Invert<Output = CtOption<Scalar<C>>> + SignPrimitive<C>,
@@ -64,55 +41,50 @@ where
     AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
     FieldBytesSize<C>: sec1::ModulusSize,
 {
-    fn sign(&self, _id:&SshIdentity, data: &[u8], _flags: u32) -> Result<Vec<u8>> {
-        let signature: Signature<C> = self.key.sign(data);
-        let (r, s) = signature.split_bytes();
-        let mut r = r.to_vec();
-        let mut s = s.to_vec();
-        let zero = &[0 as u8];
-        if r[0] > 127 {
-            r.splice(0..0, zero.iter().cloned());
-        }
-
-        if s[0] > 127 {
-            s.splice(0..0, zero.iter().cloned());
-        }
-
-        Ok(
-            append_parts(&[
-                &self.curve,
-                &append_parts(&[
-                    &r,
-                    &s,
-                ]),
-            ]),
-        )
-    }
-
-    fn public_key(&self) -> Result<Vec<u8>> {
-        Ok(self.key.verifying_key().to_sec1_bytes().as_ref().to_vec())
-    }
-
-    fn matches(&self, key: &[u8]) -> bool {
-        let mut reader = DataReader::new(key);
-        let _key_type = match reader.get_slice() {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
-        let _curve_name = match reader.get_slice() {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
-        let given_public = match reader.get_slice() {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
-        let public = match self.public_key() {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
-
-        given_public == public
+    pub fn new(key: ecdsa::SigningKey<C>, id: Vec<u8>, curve: Vec<u8>) -> Self {
+        Self { key, id, curve }
     }
 }
 
+impl<C> TryFromDataReader for EcDsaKey<C>
+where
+    C: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression,
+    Scalar<C>: Invert<Output = CtOption<Scalar<C>>> + SignPrimitive<C>,
+    SignatureSize<C>: ArrayLength<u8>,
+    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
+    FieldBytesSize<C>: sec1::ModulusSize,
+{
+    fn try_from_data_reader(r: &mut DataReader<'_>) -> Result<Self> {
+        let key_type = r.get_slice()?;
+        let curve_name = r.get_slice()?;
+        let q = r.get_slice()?;
+        let d = r.get_slice()?;
+        let private = strip_zero(d);
+        let id = append_parts(&[key_type, curve_name, q]);
+        let signing_key: SigningKey<C> =
+            SigningKey::from_slice(private).map_err(|_| ErrorKind::KeyNotCreated)?;
+        Ok(EcDsaKey::new(signing_key, id, key_type.to_vec()))
+    }
+}
+
+impl<C> SshSigningKey for EcDsaKey<C>
+where
+    C: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression,
+    Scalar<C>: Invert<Output = CtOption<Scalar<C>>> + SignPrimitive<C>,
+    SignatureSize<C>: ArrayLength<u8>,
+    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
+    FieldBytesSize<C>: sec1::ModulusSize,
+{
+    fn sign(&self, _id: &SshIdentity, data: &[u8], _flags: u32) -> Result<Vec<u8>> {
+        let signature: Signature<C> = self.key.sign(data);
+        let (r, s) = signature.split_bytes();
+        let r = add_zero(r.to_vec());
+        let s = add_zero(s.to_vec());
+
+        Ok(append_parts(&[&self.curve, &append_parts(&[&r, &s])]))
+    }
+
+    fn id(&self) -> &[u8] {
+        &self.id
+    }
+}
