@@ -16,6 +16,13 @@ pub struct RsaKey {
 impl SshSigningKey for RsaKey {
     fn sign(&self, _id: &SshIdentity, data: &[u8], _flags: u32) -> Result<Vec<u8>> {
         match _flags {
+            0 => {
+                let signing_key: SigningKey<Sha256> = SigningKey::new(self.key.clone());
+                let sig = signing_key
+                    .try_sign(data)
+                    .map_err(|_| ErrorKind::TooShort)?;
+                Ok(append_parts(&[b"rsa-sha2-256", &sig.to_vec()]))
+            }
             2 => {
                 let signing_key: SigningKey<Sha256> = SigningKey::new(self.key.clone());
                 let sig = signing_key
