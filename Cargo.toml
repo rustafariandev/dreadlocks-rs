@@ -6,6 +6,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ed25519-dalek = "1.0.1"
 num-bigint = "0.4.3"
 num_enum = "0.6.1"
 zeroize = { version = "1.6.0", features = ["derive"] }
+
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+opt-level = "z"  # Optimize for size

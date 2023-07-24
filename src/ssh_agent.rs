@@ -1,269 +1,247 @@
+use crate::message_builder::*;
+use crate::ssh_agent_types::*;
+use crate::data_reader::*;
 
-use num_enum::TryFromPrimitive;
 use zeroize::{Zeroize, ZeroizeOnDrop};
-
-#[derive(Debug)]
-pub struct MessageBuilder {
-    msg: Vec<u8>,
-}
-
-#[derive(Debug, Eq, PartialEq, TryFromPrimitive)]
-#[repr(u8)]
-pub enum SshAgentRequestType {
-    RsaIdentities = 1,
-    RsaChallenge = 3,
-    AddRsaIdentity = 7,
-    RemoveRsaIdentity = 8,
-    RemoveAllRsaIdentities = 9,
-
-    RequestIdentities = 11,
-    SignRequest = 13,
-    AddIdentity = 17,
-    RemoveIdentity =18,
-    RemoveAllIdentities = 19,
-
-    /* smartcard */
-    AddSmartcardKey = 20,
-    RemoveSmartcardKey = 21,
-
-    /* LOCK/UNLOCK THE AGENT */
-    Lock = 22,
-    Unlock = 23,
-
-    AddRsaIdConstrained = 24,
-    AddIdConstrained = 25,
-    AddSmartcardKeyConstrained = 26,
-
-    /* GENERIC EXTENSION MECHANISM */
-    Extension = 27,
-}
-
-#[derive(Debug, Eq, PartialEq, TryFromPrimitive)]
-#[repr(u8)]
-pub enum SshAgentResponseType {
-    /* Legacy */
-    RsaIdentitiesAnswer = 2,
-    RsaResponse = 4,
-
-    /* Messages for the authentication agent connection. */
-    Failure = 5,
-    Success = 6,
-
-    /* private OpenSSH extensions for SSH2 */
-    IdentitiesAnswer = 12,
-    SignResponse = 14,
-
-    /* GENERIC EXTENSION MECHANISM */
-    ExtensionFailure = 28,
-
-}
-
-impl MessageBuilder {
-
-    pub fn new(id: u8) -> Self {
-        let mut b = MessageBuilder{
-            msg: Vec::new(),
-        };
-        
-        b.msg.reserve(64);
-        b.reset(id);
-        b
-    }
-
-    pub fn reset(&mut self, id: u8) {
-        self.msg.resize(5, 0);
-        self.msg[4] = id;
-    }
-
-    pub fn build(&mut self) -> &[u8] {
-        let length = (self.msg.len() - 4) as u32;
-        self.msg[0] = ((length & 0xFF000000) >> 24) as u8;
-        self.msg[1] = ((length & 0x00FF0000) >> 16) as u8;
-        self.msg[2] = ((length & 0x0000FF00) >> 8) as u8;
-        self.msg[3] = (length & 0x000000FF) as u8;
-        self.msg.as_slice()
-    }
-    
-    pub fn add_string(&mut self, part: String) -> &mut Self {
-        return self.add_bytes(part);
-    }
-
-    pub fn add_u64(&mut self, part: u64) -> &mut Self {
-        self.msg.reserve(8);
-        self.msg.push(((part & 0xFF00000000000000) >> 56) as u8);
-        self.msg.push(((part & 0x00FF000000000000) >> 48) as u8);
-        self.msg.push(((part & 0x0000FF0000000000) >> 40) as u8);
-        self.msg.push(((part & 0x000000FF00000000) >> 32) as u8);
-        self.msg.push(((part & 0x00000000FF000000) >> 24) as u8);
-        self.msg.push(((part & 0x0000000000FF0000) >> 16) as u8);
-        self.msg.push(((part & 0x000000000000FF00) >> 8) as u8);
-        self.msg.push((part & 0x00000000000000FF) as u8);
-        self
-    }
-
-    pub fn add_u32(&mut self, part: u32) -> &mut Self {
-        self.msg.reserve(4);
-        self.msg.push(((part & 0xFF000000) >> 24) as u8);
-        self.msg.push(((part & 0x00FF0000) >> 16) as u8);
-        self.msg.push(((part & 0x0000FF00) >> 8) as u8);
-        self.msg.push((part & 0x000000FF) as u8);
-        self
-    }
-
-    pub fn add_big_uint(&mut self, part: num_bigint::BigUint) -> &mut Self {
-        self.add_bytes(part.to_bytes_be())
-    }
-
-    pub fn add_big_int(&mut self, part: num_bigint::BigInt) -> &mut Self {
-        self.add_bytes(part.to_signed_bytes_be())
-    }
-
-    pub fn add_str(&mut self, part: &str) -> &mut Self {
-        return self.add_bytes(part);
-    }
-
-    pub fn add_byte(&mut self, part: u8) -> &mut Self {
-        self.msg.push(part);
-        self
-    }
-
-    pub fn add_bool(&mut self, part: bool) -> &mut Self {
-        self.msg.push(
-            if part { 1 } else { 0 }
-        );
-        self
-    }
-
-    fn add_bytes<T: AsRef<[u8]>>(&mut self, part: T) -> &mut Self {
-        let bytes = part.as_ref();
-        let length = bytes.len() as u32;
-        self.add_u32(length);
-        self.msg.extend_from_slice(bytes);
-        self
-    }
-
-    pub fn failure() ->  MessageBuilder {
-        MessageBuilder::new(SshAgentResponseType::Failure as u8)
-    }
-
-    pub fn success() ->  MessageBuilder {
-        MessageBuilder::new(SshAgentResponseType::Success as u8)
-    }
-
-}
-
+use ed25519_dalek::{Signer};
 #[derive(Zeroize, ZeroizeOnDrop, Debug)]
-pub struct MessageReader {
-    data:Vec<u8>,
-    position: usize,
+pub struct SafeBytes(pub Vec<u8>);
+
+enum LockStatus {
+	Locked,
+	Unlocked,
 }
 
-impl<'a: 'b, 'b> MessageReader {
-    pub fn new(data:Vec<u8>) -> Option<MessageReader> {
-        if data.len() >= 5 {
-            Some(
-                MessageReader{
-                    data,
-                    position:5
+pub struct SshAgent {
+	lock_status: LockStatus,
+    secret: SafeBytes,
+    identities: Vec<SshIdentity>,
+}
+
+trait SigningKey {
+    fn sign(&self, data: &[u8], _flags: u32) -> Option<Vec<u8>>;
+    fn matches(&self, key: &[u8]) -> bool;
+    fn public_key(&self) -> Option<Vec<u8>>;
+    fn verify(&self, sig: &[u8], data: &[u8]) -> bool;
+}
+
+pub struct SshIdentity {
+    key_type: Vec<u8>,
+    key_pair:  ed25519_dalek::Keypair,
+    comment: Vec<u8>,
+}
+
+impl SshIdentity {
+    fn sign(&self, data: &[u8], _flags: u32) -> Option<Vec<u8>> {
+        Some(self.key_pair.sign(data).as_ref().to_vec())
+    }
+}
+
+impl SshAgent {
+    pub fn new() -> SshAgent {
+        SshAgent {
+            lock_status: LockStatus::Unlocked,
+            secret: SafeBytes(Vec::new()),
+            identities: Vec::new(),
+        }
+    }
+
+    pub fn handle_msg(&mut self, data: &[u8]) -> MessageBuilder {
+        match self.lock_status {
+            LockStatus::Unlocked => {
+                self.handle_msg_in_unlocked(data)
+            },
+            LockStatus::Locked => {
+                self.handle_msg_in_locked(data)
+            },
+        }
+    }
+
+    fn handle_msg_in_locked(&mut self, data: &[u8]) -> MessageBuilder {
+        if let Ok(t) = SshAgentRequestType::try_from(data[4]) {
+            use SshAgentRequestType::*;
+            return match t {
+                Unlock => self.unlock(data),
+                RequestIdentities => self.empty_identities(),
+                _ => MessageBuilder::failure(),
+            };
+        }
+
+        MessageBuilder::failure()
+    }
+
+    fn empty_identities(&mut self) -> MessageBuilder {
+        let mut msg = MessageBuilder::new(SshAgentResponseType::IdentitiesAnswer as u8);
+        msg.add_u32(0);
+        msg
+    }
+
+    fn sign_request(&self, data: &[u8]) -> MessageBuilder {
+        let mut reader = DataReader::with_pos(5);
+        let key = match reader.get_slice(data) {
+            Some(v) => v,
+            None => return MessageBuilder::failure(),
+        };
+
+        let to_sign = match reader.get_slice(data) {
+            Some(v) => v,
+            None => return MessageBuilder::failure(),
+        };
+
+        let flags = match reader.get_u32(data) {
+            Some(v) => v,
+            None => return MessageBuilder::failure(),
+        };
+
+        let key = match self.find_identity(key) {
+            Some(k) => k,
+            None => return MessageBuilder::failure(),
+        };
+
+        let signature = match key.sign(to_sign, flags) {
+            Some(s) => s,
+            None => return MessageBuilder::failure(),
+        };
+
+        let mut msg = MessageBuilder::new(SshAgentResponseType::SignResponse as u8);
+        msg.add_sub_message(&[&key.key_type, &signature]);
+
+        msg
+    }
+
+    fn find_identity(&self, key: &[u8]) -> Option<&SshIdentity> {
+        let mut reader = DataReader::new();
+        let _key_type = reader.get_slice(key)?;
+        let public = reader.get_slice(key)?;
+        self.identities.iter().find(|&e| e.key_pair.public.as_bytes() == public)
+    }
+
+    fn find_position(&self, key: &[u8]) -> Option<usize> {
+        let mut reader = DataReader::new();
+        let _key_type = reader.get_slice(key)?;
+        let public = reader.get_slice(key)?;
+        self.identities.iter().position(|e| e.key_pair.public.as_bytes() == public)
+    }
+
+    fn list_identities(&mut self) -> MessageBuilder {
+        let mut msg = MessageBuilder::new(SshAgentResponseType::IdentitiesAnswer as u8);
+        msg.add_u32(self.identities.len() as u32);
+        for identity in &self.identities {
+            msg.add_sub_message(&[&identity.key_type, identity.key_pair.public.as_bytes()]);
+            msg.add_str(std::str::from_utf8(&identity.comment).unwrap());
+        }
+
+        msg
+    }
+
+    fn parse_identity(&mut self, data: &[u8]) -> Option<SshIdentity> {
+        let mut reader = DataReader::with_pos(5);
+        let key_type = reader.get_slice(data)?;
+        let _public = reader.get_slice(data)?;
+        let private = reader.get_slice(data)?;
+        let comment = reader.get_slice(data)?;
+
+        Some(SshIdentity{
+            key_type: key_type.to_vec(),
+            key_pair: ed25519_dalek::Keypair::from_bytes(private).unwrap(),
+            comment: comment.to_vec(),
+        })
+    }
+
+    fn add_identity(&mut self, data: &[u8]) -> MessageBuilder {
+        if let Some(identity) = self.parse_identity(data) {
+            self.identities.push(identity);
+            MessageBuilder::success()
+        } else {
+            MessageBuilder::failure()
+        }
+    }
+
+    fn remove_identities(&mut self) -> MessageBuilder {
+        self.identities.clear();
+        MessageBuilder::success()
+    }
+
+    fn handle_msg_in_unlocked(&mut self, data: &[u8]) -> MessageBuilder {
+        println!("type {:?}", data[4]);
+        if let Ok(t) = SshAgentRequestType::try_from(data[4]) {
+            use SshAgentRequestType::*;
+            match t {
+                Lock =>  self.lock(data),
+                Unlock => MessageBuilder::failure(),
+                RequestIdentities => self.list_identities(),
+                RemoveAllIdentities => self.remove_identities(),
+                RemoveIdentity => self.remove_identity(data),
+                AddIdentity => self.add_identity(data),
+                SignRequest => self.sign_request(data),
+                Extension => MessageBuilder::new(SshAgentResponseType::ExtensionFailure as u8),
+                _ => self.unhandled(data)
+            }
+        } else {
+            MessageBuilder::failure()
+        }
+    }
+
+    fn unhandled(&mut self, _:&[u8]) -> MessageBuilder {
+        MessageBuilder::failure()
+    }
+
+    fn remove_identity(&mut self, data: &[u8]) -> MessageBuilder {
+        let mut reader = DataReader::with_pos(5);
+        let key = match reader.get_slice(data) {
+            Some(v) => v,
+            None => return MessageBuilder::failure(),
+        };
+
+        if let Some(i) = self.find_position(key) {
+            self.identities.remove(i);
+            MessageBuilder::success()
+        } else {
+            MessageBuilder::failure()
+        }
+    }
+
+    fn lock(&mut self, data: &[u8]) -> MessageBuilder {
+        let mut reader = DataReader::with_pos(5);
+        match reader.get_slice(data) {
+            Some(secret) => {
+                self.secret.zeroize();
+                self.secret.0.clear();
+                self.secret.0.extend_from_slice(secret);
+                self.lock_status = LockStatus::Locked;
+                self.encrypt_store();
+                MessageBuilder::new(SshAgentResponseType::Success as u8)
+            },
+            None => {
+                MessageBuilder::failure()
+            },
+        }
+    }
+
+    fn encrypt_store(&mut self) {
+    }
+
+    fn decrypt_store(&mut self) {
+    }
+
+    fn unlock(&mut self,  data: &[u8]) -> MessageBuilder {
+        let mut reader = DataReader::with_pos(5);
+        match reader.get_slice(data) {
+            Some(secret) => {
+                if secret != self.secret.0 {
+                    MessageBuilder::failure()
+                } else {
+                    // Zero out old secret
+                    self.secret.zeroize();
+                    self.secret.0.clear();
+                    self.lock_status = LockStatus::Unlocked;
+                    self.decrypt_store();
+                    MessageBuilder::success()
                 }
-            )
-        } else {
-            None
+            },
+            None => {
+                MessageBuilder::failure()
+            },
         }
-    }
-
-    pub fn current_position(&self) -> usize {
-        self.position
-    }
-
-    pub fn get_type(&self) -> u8 {
-        self.data[4]
-    }
-    
-    fn more(&self) -> bool {
-        self.position < self.data.len() 
-    }
-
-    pub fn check_pos(&self, pos: usize, len: usize) -> Option<()> {
-        if self.data.len() < pos + len  {
-            return None;
-        }
-
-        Some(())
-    }
-
-    fn advance_position(&mut self, len: usize) -> Option<usize> {
-        let o = self.position;
-        if self.data.len() - o < len  {
-            None
-        } else {
-            self.position+=len;
-            Some(o)
-        }
-    }
-
-    pub fn get_u8(&mut self) -> Option<u8> {
-        let o = self.advance_position(1)?;
-        Some(self.data[o])
-    }
-
-    pub fn get_u8_at(&self, pos: usize) -> Option<(u8, usize)> {
-        self.check_pos(pos, 1)?;
-        Some((self.data[pos], pos + 1))
-    }
-
-    pub fn get_bool(&mut self) -> Option<bool> {
-        let o = self.advance_position(1)?;
-        Some(if self.data[o] == 0 { false } else { true })
-    }
-
-    pub fn get_bool_at(&self, pos: usize) -> Option<(bool, usize)> {
-        self.check_pos(pos, 1)?;
-        Some(
-            (
-                if self.data[pos] == 0 { false } else { true },
-                pos + 1
-            )
-        )
-    }
-
-    pub fn get_u32(&mut self) -> Option<u32> {
-        let o = self.advance_position(4)?;
-        Some(
-            ((self.data[o] as u32) << 24) |
-            ((self.data[o+1] as u32) << 16) |
-            ((self.data[o+2] as u32) << 8) |
-            ((self.data[o+3] as u32) )
-        )
-    }
-
-    pub fn get_u32_at(&self, o: usize) -> Option<(u32, usize)> {
-        self.check_pos(o, 4)?;
-        Some(
-            (
-            ((self.data[o] as u32) << 24) |
-            ((self.data[o+1] as u32) << 16) |
-            ((self.data[o+2] as u32) << 8) |
-            ((self.data[o+3] as u32) ),
-            o+4
-            )
-        )
-    }
-
-    pub fn get_slice(&'a mut self) -> Option<&'b [u8]> {
-        let len = self.get_u32()? as usize;
-        let o = self.advance_position(len)?;
-        Some(&self.data[o..o+len])
-    }
-
-    pub fn get_slice_at(&'a self, o: usize) -> Option<(&'b [u8], usize)> {
-        self.check_pos(o, 4)?;
-        let (len, o) = self.get_u32_at(o)?;
-        let len = len as usize;
-        Some((&self.data[o..o+len], o+len))
-    }
-
-    pub fn set_position(&mut self, o: usize) {
-        self.position = o;
     }
 }
