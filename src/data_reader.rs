@@ -26,7 +26,7 @@ impl<'a> DataReader<'a> {
         Ok(())
     }
 
-    fn advance_position(&mut self, len: usize) -> Result<usize> {
+    pub fn advance_position(&mut self, len: usize) -> Result<usize> {
         self.check_space(len)?;
         let o = self.pos;
         self.pos += len;
