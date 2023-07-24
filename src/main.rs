@@ -315,6 +315,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         match unsafe { nix::unistd::fork() } {
             Ok(nix::unistd::ForkResult::Parent { child }) => {
+                let _ = sock_path_info.keep();
                 if cli.commands.is_empty() {
                     if cli.c_shell {
                         println!(
@@ -332,7 +333,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("echo Agent pid {};", child);
                     return Ok(());
                 }
-                let _ = sock_path_info.keep();
                 std::env::set_var(DREADLOCKS_SOCK_ENV_NAME, &sock_path_info.sock_path);
                 let pid_str = format!("{}", child);
                 std::env::set_var(DREADLOCKS_AGENT_PID_ENV_NAME, pid_str);
