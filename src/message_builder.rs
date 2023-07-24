@@ -1,4 +1,5 @@
 use crate::ssh_agent_types::*;
+use crate::utils::*;
 
 #[derive(Debug)]
 pub struct MessageBuilder {
@@ -6,12 +7,11 @@ pub struct MessageBuilder {
 }
 
 impl MessageBuilder {
-
     pub fn new(id: u8) -> Self {
         let mut b = MessageBuilder {
             msg: Vec::with_capacity(64),
         };
-        
+
         b.reset(id);
         b
     }
@@ -29,7 +29,7 @@ impl MessageBuilder {
         self.msg[3] = (length & 0x000000FF) as u8;
         self.msg.as_slice()
     }
-    
+
     pub fn add_string(&mut self, part: String) -> &mut Self {
         return self.add_bytes(part);
     }
@@ -49,7 +49,7 @@ impl MessageBuilder {
 
     pub fn add_u32(&mut self, part: u32) -> &mut Self {
         self.msg.reserve(4);
-        Self::add_u32_to_vec(&mut self.msg, part);
+        add_u32_to_vec(&mut self.msg, part);
         self
     }
 
@@ -71,22 +71,15 @@ impl MessageBuilder {
     }
 
     pub fn add_bool(&mut self, part: bool) -> &mut Self {
-        self.msg.push( if part { 1 } else { 0 });
+        self.msg.push(if part { 1 } else { 0 });
         self
-    }
-
-    fn add_u32_to_vec(vec:&mut Vec<u8>, num:u32) {
-        vec.push(((num & 0xFF000000) >> 24) as u8);
-        vec.push(((num & 0x00FF0000) >> 16) as u8);
-        vec.push(((num & 0x0000FF00) >> 8) as u8);
-        vec.push((num & 0x000000FF) as u8);
     }
 
     pub fn add_sub_message(&mut self, parts: &[&[u8]]) -> &mut Self {
         let len = parts.iter().map(|e| e.len() + 4).sum::<usize>();
         let mut data: Vec<u8> = Vec::with_capacity(len);
         for part in parts {
-            Self::add_u32_to_vec(&mut data, part.len() as u32);
+            add_u32_to_vec(&mut data, part.len() as u32);
             data.extend_from_slice(part);
         }
         return self.add_bytes(data);
@@ -100,13 +93,11 @@ impl MessageBuilder {
         self
     }
 
-    pub fn failure() ->  MessageBuilder {
+    pub fn failure() -> MessageBuilder {
         MessageBuilder::new(SshAgentResponseType::Failure as u8)
     }
 
-    pub fn success() ->  MessageBuilder {
+    pub fn success() -> MessageBuilder {
         MessageBuilder::new(SshAgentResponseType::Success as u8)
     }
-
 }
-
