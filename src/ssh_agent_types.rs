@@ -49,3 +49,12 @@ pub enum SshAgentResponseType {
     /* GENERIC EXTENSION MECHANISM */
     ExtensionFailure = 28,
 }
+
+#[derive(Debug, Eq, PartialEq, TryFromPrimitive)]
+#[repr(u8)]
+pub enum ConstraintType {
+    Lifetime = 1,
+    Confirm = 2,
+    Maxsign = 3,
+    Extension = 255,
+}
