@@ -18,10 +18,6 @@ impl<'a> DataReader<'a> {
         DataReader { pos: 0, data }
     }
 
-    pub fn with_pos(pos: usize, data: &[u8]) -> DataReader {
-        DataReader { pos, data }
-    }
-
     fn check_space(&self, len: usize) -> Result<()> {
         if self.data.len() < len + self.pos {
             return Err(ErrorKind::TooShort);
