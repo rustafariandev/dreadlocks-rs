@@ -506,7 +506,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rusty-lock"
+name = "rusty-keys"
 version = "0.1.0"
 dependencies = [
  "ecdsa",

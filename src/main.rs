@@ -5,6 +5,7 @@ mod ssh_agent_types;
 mod message_builder;
 mod data_reader;
 mod ecdsa_key;
+mod error;
 use ssh_agent::*;
 
 fn read_packet(stream: &UnixStream) -> Result<Vec<u8>,std::io::Error> {
@@ -51,18 +52,18 @@ mod tests {
     use super::*;
     #[test]
     fn test_read_packet() {
-        use std::os::unix::net::{UnixStream, UnixListener, SocketAddr};
+        use std::os::unix::net::{UnixStream};
         use std::io::Write;
-        let (mut sock1, mut sock2) = match UnixStream::pair() {
+        let (mut sock1, sock2) = match UnixStream::pair() {
             Ok((sock1, sock2)) => (sock1, sock2),
             Err(e) => {
                 panic!("Couldn't create a pair of sockets: {e:?}");
             }
         };
-        let mut data: [u8;8192] = [1;8192];
-        let mut len = u32_to_byte_be(data.len() as u32);
-        let bytes = sock1.write(&len).unwrap();
-        let bytes = sock1.write(&data).unwrap();
+        let data: [u8;8192] = [1;8192];
+        let len = u32_to_byte_be(data.len() as u32);
+        let _ = sock1.write(&len).unwrap();
+        let _ = sock1.write(&data).unwrap();
         let vec = read_packet(&sock2).unwrap();
         println!("vec {:?}", vec);
         assert_eq!(&vec, &data);
@@ -74,11 +75,20 @@ fn handle_client(agent: &mut SshAgent, mut stream: UnixStream, _: SocketAddr) ->
     if let Ok(data) = read_packet(&stream) {
         println!("in: {:?}", data);
         if data.len() >= 1 {
-            let mut data = agent.handle_msg(&data);
-            println!("out: {:?}", data);
-            match stream.write_all(data.build()) {
-                Err(e) => {},
-                Ok(_) => {},
+            match agent.handle_msg(&data) {
+                Err(_e) => {
+                    match stream.write_all(&[0,0,0,0,5]) {
+                        Err(_) => {},
+                        Ok(_) => {},
+                    }
+                },
+                Ok(mut data) => {
+                    println!("out: {:?}", data);
+                    match stream.write_all(data.build()) {
+                        Err(_) => {},
+                        Ok(_) => {},
+                    }
+                }
             }
         }
     }

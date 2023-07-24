@@ -5,27 +5,25 @@ use crate::ssh_agent::{
     SshSigningKey,
 };
 
+use crate::error::Result;
+
 use elliptic_curve::{
     point::PointCompression,
     generic_array::ArrayLength,
     ops::Invert,
     subtle::{CtOption},
-    sec1::{self, CompressedPoint, EncodedPoint, FromEncodedPoint, ToEncodedPoint},
-    CurveArithmetic, FieldBytes, FieldBytesSize, NonZeroScalar, PrimeCurve, Scalar, SecretKey,
-    AffinePoint, PublicKey,
+    sec1::{self, FromEncodedPoint, ToEncodedPoint},
+    CurveArithmetic, FieldBytesSize, PrimeCurve, Scalar,
+    AffinePoint,
 };
 
 use ecdsa::{
     SignatureSize,
     Signature,
-    hazmat::{bits2field, DigestPrimitive, SignPrimitive, VerifyPrimitive},
+    hazmat::{DigestPrimitive, SignPrimitive},
 };
 
-use signature::{
-    hazmat::{PrehashSigner, RandomizedPrehashSigner},
-    rand_core::CryptoRngCore,
-    DigestSigner, RandomizedDigestSigner, RandomizedSigner, Signer,
-};
+use signature::{ Signer };
 
 
 pub struct EcDsaKey<C>
@@ -66,7 +64,7 @@ where
     AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
     FieldBytesSize<C>: sec1::ModulusSize,
 {
-    fn sign(&self, id:&SshIdentity, data: &[u8], _flags: u32) -> Option<Vec<u8>> {
+    fn sign(&self, _id:&SshIdentity, data: &[u8], _flags: u32) -> Result<Vec<u8>> {
         let signature: Signature<C> = self.key.sign(data);
         let (r, s) = signature.split_bytes();
         let mut r = r.to_vec();
@@ -80,7 +78,7 @@ where
             s.splice(0..0, zero.iter().cloned());
         }
 
-        Some(
+        Ok(
             append_parts(&[
                 &self.curve,
                 &append_parts(&[
@@ -91,27 +89,27 @@ where
         )
     }
 
-    fn public_key(&self) -> Option<Vec<u8>> {
-        Some(self.key.verifying_key().to_sec1_bytes().as_ref().to_vec())
+    fn public_key(&self) -> Result<Vec<u8>> {
+        Ok(self.key.verifying_key().to_sec1_bytes().as_ref().to_vec())
     }
 
     fn matches(&self, key: &[u8]) -> bool {
         let mut reader = DataReader::new();
         let _key_type = match reader.get_slice(key) {
-            Some(v) => v,
-            None => return false,
+            Ok(v) => v,
+            Err(_) => return false,
         };
         let _curve_name = match reader.get_slice(key) {
-            Some(v) => v,
-            None => return false,
+            Ok(v) => v,
+            Err(_) => return false,
         };
         let given_public = match reader.get_slice(key) {
-            Some(v) => v,
-            None => return false,
+            Ok(v) => v,
+            Err(_) => return false,
         };
         let public = match self.public_key() {
-            Some(v) => v,
-            None => return false,
+            Ok(v) => v,
+            Err(_) => return false,
         };
 
         given_public == public
