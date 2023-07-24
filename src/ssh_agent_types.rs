@@ -12,7 +12,7 @@ pub enum SshAgentRequestType {
     RequestIdentities = 11,
     SignRequest = 13,
     AddIdentity = 17,
-    RemoveIdentity =18,
+    RemoveIdentity = 18,
     RemoveAllIdentities = 19,
 
     /* smartcard */
@@ -48,5 +48,4 @@ pub enum SshAgentResponseType {
 
     /* GENERIC EXTENSION MECHANISM */
     ExtensionFailure = 28,
-
 }

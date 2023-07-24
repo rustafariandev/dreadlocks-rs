@@ -1,34 +1,30 @@
-use crate::error::Result;
 use crate::error::ErrorKind;
+use crate::error::Result;
 
 #[derive(Debug)]
-pub struct DataReader <'a> {
+pub struct DataReader<'a> {
     pos: usize,
     data: &'a [u8],
 }
 
 pub trait TryFromDataReader {
-    fn try_from_data_reader(r:&mut DataReader<'_>) -> Result<Self> where Self: Sized;
+    fn try_from_data_reader(r: &mut DataReader<'_>) -> Result<Self>
+    where
+        Self: Sized;
 }
 
 impl<'a> DataReader<'a> {
     pub fn new(data: &[u8]) -> DataReader {
-        DataReader{
-            pos: 0,
-            data,
-        }
+        DataReader { pos: 0, data }
     }
 
-    pub fn with_pos(pos:usize, data: &[u8]) -> DataReader {
-        DataReader{
-            pos,
-            data,
-        }
+    pub fn with_pos(pos: usize, data: &[u8]) -> DataReader {
+        DataReader { pos, data }
     }
 
     fn check_space(&self, len: usize) -> Result<()> {
         if self.data.len() < len + self.pos {
-            return Err(ErrorKind::TooShort)
+            return Err(ErrorKind::TooShort);
         }
 
         Ok(())
@@ -37,11 +33,11 @@ impl<'a> DataReader<'a> {
     fn advance_position(&mut self, len: usize) -> Result<usize> {
         self.check_space(len)?;
         let o = self.pos;
-        self.pos+=len;
+        self.pos += len;
         Ok(o)
     }
 
-    pub fn skip_u8(&mut self) ->Result<()> {
+    pub fn skip_u8(&mut self) -> Result<()> {
         self.advance_position(1)?;
         Ok(())
     }
@@ -53,23 +49,23 @@ impl<'a> DataReader<'a> {
     }
 
     fn extract_u32(data: &[u8], o: usize) -> u32 {
-        ((data[o] as u32) << 24) |
-        ((data[o+1] as u32) << 16) |
-        ((data[o+2] as u32) << 8) |
-        (data[o+3] as u32)
+        ((data[o] as u32) << 24)
+            | ((data[o + 1] as u32) << 16)
+            | ((data[o + 2] as u32) << 8)
+            | (data[o + 3] as u32)
     }
 
-    pub fn skip_slice(&mut self) ->Result<()> {
+    pub fn skip_slice(&mut self) -> Result<()> {
         let len = self.peek_u32()? as usize;
-        self.advance_position(len+4)?;
+        self.advance_position(len + 4)?;
         Ok(())
     }
 
-    pub fn peek_slice(&mut self) ->Result<&'a [u8]> {
+    pub fn peek_slice(&mut self) -> Result<&'a [u8]> {
         let len = self.peek_u32()? as usize;
-        self.check_space(len+4)?;
-        let o = self.pos+4;
-        Ok(&self.data[o..o+len])
+        self.check_space(len + 4)?;
+        let o = self.pos + 4;
+        Ok(&self.data[o..o + len])
     }
 
     pub fn get_u8(&mut self) -> Result<u8> {
@@ -90,6 +86,6 @@ impl<'a> DataReader<'a> {
     pub fn get_slice(&mut self) -> Result<&'a [u8]> {
         let len = self.get_u32()? as usize;
         let o = self.advance_position(len)?;
-        Ok(&self.data[o..o+len])
+        Ok(&self.data[o..o + len])
     }
 }

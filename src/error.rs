@@ -1,4 +1,3 @@
-
 #[derive(Debug)]
 pub enum ErrorKind {
     TooShort,
@@ -20,7 +19,7 @@ impl From<Utf8Error> for ErrorKind {
 }
 
 impl From<signature::Error> for ErrorKind {
-    fn from(_:signature::Error) -> ErrorKind {
+    fn from(_: signature::Error) -> ErrorKind {
         ErrorKind::Signature
     }
 }
