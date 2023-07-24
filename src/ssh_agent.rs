@@ -1,6 +1,7 @@
 use crate::message_builder::*;
 use crate::ssh_agent_types::*;
 use crate::data_reader::*;
+use crate::ecdsa_key::EcDsaKey;
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 #[derive(Zeroize, ZeroizeOnDrop, Debug)]
@@ -20,7 +21,7 @@ pub struct SshAgent {
     identities: Vec<SshIdentity>,
 }
 
-trait SshSigningKey {
+pub trait SshSigningKey {
     fn sign(&self, id:&SshIdentity, data: &[u8], _flags: u32) -> Option<Vec<u8>>;
     fn public_key(&self) -> Option<Vec<u8>>;
     fn matches(&self, key: &[u8]) -> bool {
@@ -60,89 +61,10 @@ impl SshSigningKey for Ed25519Key {
     }
 }
 
-pub struct EcDsaNistP256{
-    key: EcDsa256SigningKey,
-    curve: Vec<u8>,
-}
-
-impl SshSigningKey for EcDsaNistP256 {
-    fn sign(&self, id:&SshIdentity, data: &[u8], _flags: u32) -> Option<Vec<u8>> {
-        let signature: EcDsa256Signature = self.key.sign(data);
-        let (r, s) = signature.split_bytes();
-        let mut r = r.to_vec();
-        let mut s = s.to_vec();
-        let zero = &[0 as u8];
-        if r[0] > 127 {
-            r.splice(0..0, zero.iter().cloned());
-        }
-
-        if s[0] > 127 {
-            s.splice(0..0, zero.iter().cloned());
-        }
-
-        Some(
-            append_parts(&[
-                "ecdsa-sha2-nistp256".as_bytes(),
-                &append_parts(&[
-                    &r,
-                    &s,
-                ]),
-            ]),
-        )
-    }
-
-    fn public_key(&self) -> Option<Vec<u8>> {
-        Some(self.key.verifying_key().to_sec1_bytes().as_ref().to_vec())
-    }
-
-    fn matches(&self, key: &[u8]) -> bool {
-        let mut reader = DataReader::new();
-        let _key_type = match reader.get_slice(key) {
-            Some(v) => v,
-            None => return false,
-        };
-        let _curve_name = match reader.get_slice(key) {
-            Some(v) => v,
-            None => return false,
-        };
-        let given_public = match reader.get_slice(key) {
-            Some(v) => v,
-            None => return false,
-        };
-        let public = match self.public_key() {
-            Some(v) => v,
-            None => return false,
-        };
-
-        given_public == public
-    }
-}
-
-mod tests {
-    use crate::data_reader::DataReader;
-    #[test]
-    fn ecdsa_from_bytes() {
-        let data:Vec<u8> = vec![0, 0, 0, 191, 17, 0, 0, 0, 19, 101, 99, 100, 115, 97, 45, 115, 104, 97, 50, 45, 110, 105, 115, 116, 112, 50, 53, 54, 0, 0, 0, 8, 110, 105, 115, 116, 112, 50, 53, 54, 0, 0, 0, 65, 4, 58, 68, 147, 51, 129, 229, 156, 162, 158, 117, 204, 245, 191, 121, 45, 224, 246, 89, 22, 221, 168, 199, 116, 54, 234, 139, 8, 23, 183, 182, 206, 22, 42, 2, 36, 106, 70, 236, 156, 36, 26, 14, 208, 99, 52, 190, 147, 241, 246, 9, 4, 250, 82, 21, 146, 221, 77, 237, 85, 193, 131, 255, 149, 253, 0, 0, 0, 33, 0, 129, 90, 137, 12, 208, 73, 28, 145, 249, 129, 220, 225, 18, 93, 170, 223, 49, 174, 54, 188, 55, 6, 54, 101, 21, 202, 154, 93, 105, 120, 254, 183, 0, 0, 0, 45, 114, 111, 111, 116, 64, 49, 55, 50, 45, 49, 48, 53, 45, 49, 48, 49, 45, 49, 55, 48, 46, 105, 112, 46, 108, 105, 110, 111, 100, 101, 117, 115, 101, 114, 99, 111, 110, 116, 101, 110, 116, 46, 99, 111, 109];
-        let mut reader = DataReader::with_pos(5);
-        let key_type = reader.get_slice(&data).unwrap();
-        let key_type_str = std::str::from_utf8(key_type).unwrap();
-        assert_eq!(key_type_str, "ecdsa-sha2-nistp256");
-        let curve_name = reader.get_slice(&data).unwrap();
-        let curve_name_str = std::str::from_utf8(curve_name).unwrap();
-        assert_eq!(curve_name_str, "nistp256");
-        let q = reader.get_slice(&data).unwrap();
-        assert_eq!(q, &[4, 58, 68, 147, 51, 129, 229, 156, 162, 158, 117, 204, 245, 191, 121, 45, 224, 246, 89, 22, 221, 168, 199, 116, 54, 234, 139, 8, 23, 183, 182, 206, 22, 42, 2, 36, 106, 70, 236, 156, 36, 26, 14, 208, 99, 52, 190, 147, 241, 246, 9, 4, 250, 82, 21, 146, 221, 77, 237, 85, 193, 131, 255, 149, 253]);
-        let d = reader.get_slice(&data).unwrap();
-        assert_eq!(d, [0, 129, 90, 137, 12, 208, 73, 28, 145, 249, 129, 220, 225, 18, 93, 170, 223, 49, 174, 54, 188, 55, 6, 54, 101, 21, 202, 154, 93, 105, 120, 254, 183]);
-        let comment = reader.get_slice(&data).unwrap();
-        let comment_str = std::str::from_utf8(comment).unwrap();
-        assert_eq!(comment_str, "root@172-105-101-170.ip.linodeusercontent.com");
-    }
-}
-
 pub enum SshKey {
     Ed25519Key(Ed25519Key),
-    EcDsaNistP256(EcDsaNistP256),
+    EcDsaNistP256(EcDsaKey<p256::NistP256>),
+    EcDsaNistP384(EcDsaKey<p384::NistP384>),
 }
 
 pub struct SshIdentity {
@@ -193,19 +115,35 @@ impl SshIdentity {
                 let curve_name_str = std::str::from_utf8(curve_name).ok()?;
                 let q = reader.get_slice(&data)?;
                 let d = reader.get_slice(&data)?;
-                if d.len() > 33 || d.len() < 32  {
-                    return None;
-                }
-
-                let private = if d.len() == 33 { &d[1..] } else {d };
+                let private = if d[0] == 0 { &d[1..] } else {d };
                 let comment = reader.get_slice(data)?;
                 Some(SshIdentity{
                     key_type: append_parts(&[key_type, curve_name, q]),
                     key: SshKey::EcDsaNistP256(
-                        EcDsaNistP256 {
-                            key: EcDsa256SigningKey::from_slice(private).ok()?,
-                            curve: curve_name.to_vec(),
-                        }
+                        EcDsaKey::new(
+                           p256::ecdsa::SigningKey::from_slice(private).ok()?,
+                           key_type.to_vec(),
+                           curve_name.to_vec(),
+                        ),
+                    ),
+                    comment: comment.to_vec(),
+                })
+            },
+            "ecdsa-sha2-nistp384" => {
+                let curve_name = reader.get_slice(&data)?;
+                let curve_name_str = std::str::from_utf8(curve_name).ok()?;
+                let q = reader.get_slice(&data)?;
+                let d = reader.get_slice(&data)?;
+                let private = if d[0] == 0 { &d[1..] } else {d };
+                let comment = reader.get_slice(data)?;
+                Some(SshIdentity{
+                    key_type: append_parts(&[key_type, curve_name, q]),
+                    key: SshKey::EcDsaNistP384(
+                        EcDsaKey::new(
+                           p384::ecdsa::SigningKey::from_slice(private).ok()?,
+                           key_type.to_vec(),
+                            curve_name.to_vec(),
+                        ),
                     ),
                     comment: comment.to_vec(),
                 })
@@ -218,6 +156,7 @@ impl SshIdentity {
         match &self.key {
             SshKey::Ed25519Key(key) => key.sign(self, data, _flags),
             SshKey::EcDsaNistP256(key) => key.sign(self, data, _flags),
+            SshKey::EcDsaNistP384(key) => key.sign(self, data, _flags),
         }
     }
 
@@ -225,6 +164,7 @@ impl SshIdentity {
         match &self.key {
             SshKey::Ed25519Key(key) => key.matches(blob),
             SshKey::EcDsaNistP256(key) => key.matches(blob),
+            SshKey::EcDsaNistP384(key) => key.matches(blob),
         }
     }
 
@@ -232,6 +172,7 @@ impl SshIdentity {
         match &self.key {
             SshKey::Ed25519Key(key) => key.public_key(),
             SshKey::EcDsaNistP256(key) => key.public_key(),
+            SshKey::EcDsaNistP384(key) => key.public_key(),
 
         }
     }

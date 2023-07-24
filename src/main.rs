@@ -4,6 +4,7 @@ mod ssh_agent;
 mod ssh_agent_types;
 mod message_builder;
 mod data_reader;
+mod ecdsa_key;
 use ssh_agent::*;
 
 fn read_packet(stream: &UnixStream) -> Result<Vec<u8>,std::io::Error> {
