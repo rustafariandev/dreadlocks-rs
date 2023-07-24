@@ -7,6 +7,8 @@ pub enum ErrorKind {
     KeyNotFound,
     KeyNotCreated,
     Signature,
+    Unsupported,
+    Parse,
 }
 
 use std::fmt;
@@ -34,6 +36,8 @@ impl fmt::Display for ErrorKind {
             ErrorKind::BadRequestType => write!(fmt, "Bad request type"),
             ErrorKind::KeyNotCreated => write!(fmt, "Bad request type"),
             ErrorKind::Signature => write!(fmt, "Signature error"),
+            ErrorKind::Unsupported => write!(fmt, "Unsupported error"),
+            ErrorKind::Parse => write!(fmt, "Parse error"),
         }
     }
 }
