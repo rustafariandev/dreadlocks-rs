@@ -9,7 +9,6 @@ use p256::{
     ecdsa::{SigningKey as EcDsa256SigningKey, Signature as EcDsa256Signature, signature::Signer as EcDsaSigner},
 };
 
-
 enum LockStatus {
 	Locked,
 	Unlocked,
@@ -171,7 +170,7 @@ pub fn append_parts(parts: &[&[u8]]) -> Vec<u8> {
 
 impl SshIdentity {
     pub fn from_bytes(data:&[u8]) -> Option<SshIdentity> {
-        let mut reader = DataReader::with_pos(5);
+        let mut reader = DataReader::with_pos(1);
         let key_type = reader.get_slice(data)?;
         let key_type_str = std::str::from_utf8(key_type).ok()?;
         match key_type_str {
@@ -259,7 +258,12 @@ impl SshAgent {
     }
 
     fn handle_msg_in_locked(&mut self, data: &[u8]) -> MessageBuilder {
-        if let Ok(t) = SshAgentRequestType::try_from(data[4]) {
+        let msg_type = match data.get(0) {
+            Some(v) => *v,
+            None => return MessageBuilder::failure(),
+        };
+
+        if let Ok(t) = SshAgentRequestType::try_from(msg_type) {
             use SshAgentRequestType::*;
             return match t {
                 Unlock => self.unlock(data),
@@ -278,7 +282,7 @@ impl SshAgent {
     }
 
     fn sign_request(&self, data: &[u8]) -> MessageBuilder {
-        let mut reader = DataReader::with_pos(5);
+        let mut reader = DataReader::with_pos(1);
         let key = match reader.get_slice(data) {
             Some(v) => v,
             None => return MessageBuilder::failure(),
@@ -354,8 +358,13 @@ impl SshAgent {
     }
 
     fn handle_msg_in_unlocked(&mut self, data: &[u8]) -> MessageBuilder {
-        println!("type {:?}", data[4]);
-        if let Ok(t) = SshAgentRequestType::try_from(data[4]) {
+        let msg_type = match data.get(0) {
+            Some(v) => *v,
+            None => return MessageBuilder::failure(),
+        };
+
+        println!("type {}", msg_type);
+        if let Ok(t) = SshAgentRequestType::try_from(msg_type) {
             use SshAgentRequestType::*;
             match t {
                 Lock =>  self.lock(data),
@@ -378,7 +387,7 @@ impl SshAgent {
     }
 
     fn remove_identity(&mut self, data: &[u8]) -> MessageBuilder {
-        let mut reader = DataReader::with_pos(5);
+        let mut reader = DataReader::with_pos(1);
         let key = match reader.get_slice(data) {
             Some(v) => v,
             None => return MessageBuilder::failure(),
@@ -393,7 +402,7 @@ impl SshAgent {
     }
 
     fn lock(&mut self, data: &[u8]) -> MessageBuilder {
-        let mut reader = DataReader::with_pos(5);
+        let mut reader = DataReader::with_pos(1);
         match reader.get_slice(data) {
             Some(secret) => {
                 self.secret.zeroize();
@@ -416,7 +425,7 @@ impl SshAgent {
     }
 
     fn unlock(&mut self,  data: &[u8]) -> MessageBuilder {
-        let mut reader = DataReader::with_pos(5);
+        let mut reader = DataReader::with_pos(1);
         match reader.get_slice(data) {
             Some(secret) => {
                 if secret != self.secret.0 {

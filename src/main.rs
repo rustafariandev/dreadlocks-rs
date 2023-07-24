@@ -72,7 +72,7 @@ fn handle_client(agent: &mut SshAgent, mut stream: UnixStream, _: SocketAddr) ->
     use std::io::Write;
     if let Ok(data) = read_packet(&stream) {
         println!("in: {:?}", data);
-        if data.len() >= 5 {
+        if data.len() >= 1 {
             let mut data = agent.handle_msg(&data);
             println!("out: {:?}", data);
             match stream.write_all(data.build()) {
