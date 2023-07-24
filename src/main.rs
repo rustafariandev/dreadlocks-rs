@@ -6,6 +6,7 @@ mod message_builder;
 mod data_reader;
 mod ecdsa_key;
 mod error;
+mod rsa_key;
 use ssh_agent::*;
 
 fn read_packet(stream: &UnixStream) -> Result<Vec<u8>,std::io::Error> {

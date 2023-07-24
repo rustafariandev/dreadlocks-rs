@@ -94,16 +94,16 @@ where
     }
 
     fn matches(&self, key: &[u8]) -> bool {
-        let mut reader = DataReader::new();
-        let _key_type = match reader.get_slice(key) {
+        let mut reader = DataReader::new(key);
+        let _key_type = match reader.get_slice() {
             Ok(v) => v,
             Err(_) => return false,
         };
-        let _curve_name = match reader.get_slice(key) {
+        let _curve_name = match reader.get_slice() {
             Ok(v) => v,
             Err(_) => return false,
         };
-        let given_public = match reader.get_slice(key) {
+        let given_public = match reader.get_slice() {
             Ok(v) => v,
             Err(_) => return false,
         };

@@ -23,12 +23,12 @@ pub trait SshSigningKey {
     fn sign(&self, id:&SshIdentity, data: &[u8], _flags: u32) -> Result<Vec<u8>>;
     fn public_key(&self) -> Result<Vec<u8>>;
     fn matches(&self, key: &[u8]) -> bool {
-        let mut reader = DataReader::new();
-        let _key_type = match reader.get_slice(key) {
+        let mut reader = DataReader::new(key);
+        let _key_type = match reader.get_slice() {
             Ok(v) => v,
             Err(_) => return false,
         };
-        let given_public = match reader.get_slice(key) {
+        let given_public = match reader.get_slice() {
             Ok(v) => v,
             Err(_) => return false,
         };
@@ -90,14 +90,14 @@ pub fn append_parts(parts: &[&[u8]]) -> Vec<u8> {
 
 impl SshIdentity {
     pub fn from_bytes(data:&[u8]) -> Result<SshIdentity> {
-        let mut reader = DataReader::with_pos(1);
-        let key_type = reader.get_slice(data)?;
+        let mut reader = DataReader::with_pos(1, data);
+        let key_type = reader.get_slice()?;
         let key_type_str = std::str::from_utf8(key_type)?;
         match key_type_str {
             "ssh-ed25519" => {
-                let public = reader.get_slice(data)?;
-                let private = reader.get_slice(data)?;
-                let comment = reader.get_slice(data)?;
+                let public = reader.get_slice()?;
+                let private = reader.get_slice()?;
+                let comment = reader.get_slice()?;
                 Ok(SshIdentity{
                     key_type: append_parts(&[key_type, public]),
                     key: SshKey::Ed25519Key(
@@ -109,11 +109,11 @@ impl SshIdentity {
                 })
             },
             "ecdsa-sha2-nistp256" => {
-                let curve_name = reader.get_slice(&data)?;
-                let q = reader.get_slice(&data)?;
-                let d = reader.get_slice(&data)?;
+                let curve_name = reader.get_slice()?;
+                let q = reader.get_slice()?;
+                let d = reader.get_slice()?;
                 let private = if d[0] == 0 { &d[1..] } else {d };
-                let comment = reader.get_slice(data)?;
+                let comment = reader.get_slice()?;
                 Ok(SshIdentity{
                     key_type: append_parts(&[key_type, curve_name, q]),
                     key: SshKey::EcDsaNistP256(
@@ -127,11 +127,11 @@ impl SshIdentity {
                 })
             },
             "ecdsa-sha2-nistp384" => {
-                let curve_name = reader.get_slice(&data)?;
-                let q = reader.get_slice(&data)?;
-                let d = reader.get_slice(&data)?;
+                let curve_name = reader.get_slice()?;
+                let q = reader.get_slice()?;
+                let d = reader.get_slice()?;
                 let private = if d[0] == 0 { &d[1..] } else {d };
-                let comment = reader.get_slice(data)?;
+                let comment = reader.get_slice()?;
                 Ok(SshIdentity{
                     key_type: append_parts(&[key_type, curve_name, q]),
                     key: SshKey::EcDsaNistP384(
@@ -212,10 +212,10 @@ impl SshAgent {
     }
 
     fn sign_request(&self, data: &[u8]) -> Result<MessageBuilder> {
-        let mut reader = DataReader::with_pos(1);
-        let key = reader.get_slice(data)?;
-        let to_sign = reader.get_slice(data)?;
-        let flags = reader.get_u32(data)?;
+        let mut reader = DataReader::with_pos(1, data);
+        let key = reader.get_slice()?;
+        let to_sign = reader.get_slice()?;
+        let flags = reader.get_u32()?;
         let key = self.find_identity(key)?;
         let signature = key.sign(to_sign, flags)?;
         let mut msg = MessageBuilder::new(SshAgentResponseType::SignResponse as u8);
@@ -282,16 +282,16 @@ impl SshAgent {
     }
 
     fn remove_identity(&mut self, data: &[u8]) -> Result<MessageBuilder> {
-        let mut reader = DataReader::with_pos(1);
-        let key = reader.get_slice(data)?;
+        let mut reader = DataReader::with_pos(1, data);
+        let key = reader.get_slice()?;
         let i = self.find_position(key)?;
         self.identities.remove(i);
         Ok(MessageBuilder::success())
     }
 
     fn lock(&mut self, data: &[u8]) -> Result<MessageBuilder> {
-        let mut reader = DataReader::with_pos(1);
-        let secret =  reader.get_slice(data)?;
+        let mut reader = DataReader::with_pos(1, data);
+        let secret =  reader.get_slice()?;
         self.secret.zeroize();
         self.secret.0.clear();
         self.secret.0.extend_from_slice(secret);
@@ -307,8 +307,8 @@ impl SshAgent {
     }
 
     fn unlock(&mut self,  data: &[u8]) -> Result<MessageBuilder> {
-        let mut reader = DataReader::with_pos(1);
-        let secret =  reader.get_slice(data)?;
+        let mut reader = DataReader::with_pos(1, data);
+        let secret =  reader.get_slice()?;
         Ok(if secret != self.secret.0 {
             MessageBuilder::failure()
         } else {
