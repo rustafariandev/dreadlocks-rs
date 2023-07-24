@@ -83,7 +83,7 @@ impl MessageBuilder {
     }
 
     pub fn add_sub_message(&mut self, parts: &[&[u8]]) -> &mut Self {
-        let len = parts.iter().map(|e| e.len()).sum::<usize>();
+        let len = parts.iter().map(|e| e.len() + 4).sum::<usize>();
         let mut data: Vec<u8> = Vec::with_capacity(len);
         for part in parts {
             Self::add_u32_to_vec(&mut data, part.len() as u32);
