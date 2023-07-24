@@ -19,8 +19,8 @@ fn handle_client(agent: &mut SshAgent, mut stream: UnixStream, _: SocketAddr) {
     }
 }
 
-fn main() {
-    let listener = UnixListener::bind("/tmp/rust-uds.sock").unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let listener = UnixListener::bind("/tmp/rust-uds.sock")?;
     let mut agent = SshAgent::new();
 
     loop {
@@ -28,8 +28,7 @@ fn main() {
             Ok((socket, addr)) => {
                 handle_client(&mut agent, socket, addr);
             },
-            Err(_e) => return,
+            Err(e) => return Err(Box::new(e)),
         }
     }
-
 }
