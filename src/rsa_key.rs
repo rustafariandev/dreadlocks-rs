@@ -165,7 +165,7 @@ mod tests {
         ];
         let mut reader = DataReader::new(&msg);
         reader.skip_u8().unwrap();
-        let rsa = RsaKey::try_from_data_reader(&mut reader).unwrap();
-        let comment = unsafe { std::str::from_utf8_unchecked(reader.get_slice().unwrap()) };
+        let _rsa = RsaKey::try_from_data_reader(&mut reader).unwrap();
+        let _comment = unsafe { std::str::from_utf8_unchecked(reader.get_slice().unwrap()) };
     }
 }

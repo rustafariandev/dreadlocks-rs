@@ -24,9 +24,8 @@ impl TryFromDataReader for Vec<Constraint> {
         while r.more() {
             match ConstraintType::try_from(r.get_u8()?).map_err(|_| ErrorKind::Unsupported)? {
                 Lifetime => {
-                    let dur = Duration::from_secs(r.get_u32()? as u64);
                     let t = std::time::Instant::now()
-                        .checked_add(dur)
+                        .checked_add(Duration::from_secs(r.get_u32()? as u64))
                         .ok_or(ErrorKind::Parse)?;
                     contraints.push(Constraint::MaxTime(t));
                 }
@@ -242,7 +241,7 @@ impl SshAgent {
         let list: Vec<IdentityItem<'_>> = self
             .identities
             .iter()
-            .filter(|i| true)
+            .filter(|_i| true)
             .map(|i| IdentityItem {
                 id: &i.key_type,
                 comment: &i.comment,
@@ -307,10 +306,10 @@ impl SshAgent {
     }
 
     fn openssh_com_session_bind(&mut self, r: &mut DataReader) -> Result<MessageBuilder> {
-        let key = r.get_slice()?;
-        let sid = r.get_slice()?;
-        let sig = r.get_slice()?;
-        let fwd = r.get_bool()?;
+        let _key = r.get_slice()?;
+        let _sid = r.get_slice()?;
+        let _sig = r.get_slice()?;
+        let _fwd = r.get_bool()?;
         Ok(MessageBuilder::new(
             SshAgentResponseType::ExtensionFailure as u8,
         ))
