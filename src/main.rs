@@ -1,5 +1,6 @@
-use std::os::unix::net::{SocketAddr, UnixListener, UnixStream};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicIsize, Ordering};
+use nix::sys::resource::{setrlimit, Resource::RLIMIT_CORE};
 
 mod data_reader;
 mod dsa_key;
@@ -18,16 +19,15 @@ use libc::{accept4, sockaddr_un};
 use nix::libc::{prctl, PR_SET_PDEATHSIG};
 use nix::sys::signal::{self, kill, SigHandler, SIGHUP, SIGINT, SIGPIPE, SIGTERM};
 use nix::sys::stat::{umask, Mode};
-use nix::unistd::Pid;
-use nix::unistd::{dup2, setpgid};
+use nix::unistd::{Pid,dup2};
 use ssh_agent::*;
 use std::fs::File;
-use std::io;
+
 use std::mem;
 use std::os::fd::IntoRawFd;
-use std::os::fd::RawFd;
+
 use std::os::unix::io::{AsRawFd, FromRawFd};
-use std::os::unix::net;
+
 use std::path::PathBuf;
 use tempdir::TempDir;
 
@@ -276,6 +276,12 @@ extern "C" fn stop_handler(_: nix::libc::c_int) {
     RUNNING.store(0, Ordering::Relaxed);
 }
 
+fn disable_core_dump() -> Result<(), Box<dyn std::error::Error>> {
+    setrlimit(RLIMIT_CORE, 0, 0)?;
+    Ok(())
+}
+
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cli = Cli::parse();
     cli.check_c_shell();
@@ -362,6 +368,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    disable_core_dump()?;
     unsafe {
         let handler = SigHandler::Handler(stop_handler);
         signal::signal(SIGPIPE, SigHandler::SigIgn).unwrap();
