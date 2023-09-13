@@ -20,9 +20,13 @@ use ecdsa::{
 
 use signature::Signer;
 
+pub trait EsDsaCurve: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression { }
+
+impl<C> EsDsaCurve for C where C: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression, { }
+
 pub struct EcDsaKey<C>
 where
-    C: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression,
+    C: EsDsaCurve,
     Scalar<C>: Invert<Output = CtOption<Scalar<C>>> + SignPrimitive<C>,
     SignatureSize<C>: ArrayLength<u8>,
     AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
@@ -35,7 +39,7 @@ where
 
 impl<C> EcDsaKey<C>
 where
-    C: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression,
+    C: EsDsaCurve,
     Scalar<C>: Invert<Output = CtOption<Scalar<C>>> + SignPrimitive<C>,
     SignatureSize<C>: ArrayLength<u8>,
     AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
@@ -48,7 +52,7 @@ where
 
 impl<C> TryFromDataReader for EcDsaKey<C>
 where
-    C: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression,
+    C: EsDsaCurve,
     Scalar<C>: Invert<Output = CtOption<Scalar<C>>> + SignPrimitive<C>,
     SignatureSize<C>: ArrayLength<u8>,
     AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
@@ -69,7 +73,7 @@ where
 
 impl<C> SshSigningKey for EcDsaKey<C>
 where
-    C: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression,
+    C: EsDsaCurve,
     Scalar<C>: Invert<Output = CtOption<Scalar<C>>> + SignPrimitive<C>,
     SignatureSize<C>: ArrayLength<u8>,
     AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
