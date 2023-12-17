@@ -1,6 +1,6 @@
+use nix::sys::resource::{setrlimit, Resource::RLIMIT_CORE};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicIsize, Ordering};
-use nix::sys::resource::{setrlimit, Resource::RLIMIT_CORE};
 
 mod data_reader;
 mod dsa_key;
@@ -15,11 +15,12 @@ mod utils;
 use clap::{Parser, ValueEnum};
 use message_builder::*;
 
-use libc::{accept4, sockaddr_un};
+#[cfg(target_os = "linux")]
 use nix::libc::{prctl, PR_SET_PDEATHSIG};
+use nix::pty::{grantpt, posix_openpt, ptsname, unlockpt, PtyMaster};
 use nix::sys::signal::{self, kill, SigHandler, SIGHUP, SIGINT, SIGPIPE, SIGTERM};
 use nix::sys::stat::{umask, Mode};
-use nix::unistd::{Pid,dup2};
+use nix::unistd::{dup2, setpgid, Pid};
 use ssh_agent::*;
 use std::fs::File;
 
@@ -28,14 +29,22 @@ use std::os::fd::IntoRawFd;
 
 use std::os::unix::io::{AsRawFd, FromRawFd};
 
+#[cfg(all(unix, not(target_os = "linux")))]
+use libc::accept;
+#[cfg(target_os = "linux")]
+use libc::accept4;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use tempdir::TempDir;
+
+use libc::sockaddr_un;
 
 trait RawAccept {
     fn raw_accept(&self) -> std::io::Result<UnixStream>;
 }
 
 impl RawAccept for UnixListener {
+    #[cfg(target_os = "linux")]
     fn raw_accept(&self) -> std::io::Result<UnixStream> {
         let fd = self.as_raw_fd();
         let mut storage: sockaddr_un = unsafe { mem::zeroed() };
@@ -54,6 +63,19 @@ impl RawAccept for UnixListener {
         let stream = unsafe { UnixStream::from_raw_fd(sock) };
         Ok(stream)
     }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    fn raw_accept(&self) -> std::io::Result<UnixStream> {
+        let fd = self.as_raw_fd();
+        let mut storage: sockaddr_un = unsafe { mem::zeroed() };
+        let mut len = mem::size_of_val(&storage) as libc::socklen_t;
+        let sock = unsafe { accept(fd, &mut storage as *mut _ as *mut _, &mut len) };
+        if sock < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let stream = unsafe { UnixStream::from_raw_fd(sock) };
+        Ok(stream)
+    }
 }
 
 fn stdio_to_dev_null() {
@@ -63,6 +85,7 @@ fn stdio_to_dev_null() {
         let _ = dup2(fd, 1).expect("dup stdout failed");
         let _ = dup2(fd, 2).expect("dup stderr failed");
         if fd <= 2 {
+            // So it will not close dev null if it is a std io descriptor.
             let _ = file.into_raw_fd();
         }
     }
@@ -256,7 +279,7 @@ fn run(listener: UnixListener) -> Result<(), Box<dyn std::error::Error>> {
                 if let Err(e) = handle_client(&mut agent, socket) {
                     eprintln!("Error {}", e)
                 }
-            },
+            }
             Err(e) => match e.kind() {
                 std::io::ErrorKind::Interrupted => {
                     eprintln!("Interrupted");
@@ -281,7 +304,6 @@ fn disable_core_dump() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cli = Cli::parse();
     cli.check_c_shell();
@@ -298,12 +320,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("echo Agent pid {pid} killed;");
         return Ok(());
     }
-
-    let prev_mask = umask(Mode::from_bits(0o0177).ok_or("")?);
+    let prev_mask = umask(Mode::from_bits(0o0077).ok_or("")?);
+    let ppid = nix::unistd::getpid();
     let mut sock_path_info = cli.get_sock_path()?;
     umask(prev_mask);
-    let ppid = nix::unistd::getpid();
-    let listener = UnixListener::bind(&sock_path_info.sock_path)?;
+    let listener =
+        UnixListener::bind(&sock_path_info.sock_path).map_err(|_| "Cannot open socket")?;
     if cli.debug || cli.foreground {
         if cli.c_shell {
             println!(
@@ -331,6 +353,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("setenv {DREADLOCKS_AGENT_PID_ENV_NAME} {};", child);
                     } else {
                         println!(
+                            r#"{DREADLOCKS_SOCK_ENV_NAME}_PREV="${DREADLOCKS_SOCK_ENV_NAME}"; export {DREADLOCKS_SOCK_ENV_NAME}_PREV;"#,
+                        );
+                        println!(
                             "{DREADLOCKS_SOCK_ENV_NAME}={}; export {DREADLOCKS_SOCK_ENV_NAME};",
                             sock_path_info.sock_path.display()
                         );
@@ -355,6 +380,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Ok(nix::unistd::ForkResult::Child) => {
                 if !cli.commands.is_empty() {
+                    #[cfg(target_os = "linux")]
                     unsafe {
                         prctl(PR_SET_PDEATHSIG, SIGTERM);
                     }

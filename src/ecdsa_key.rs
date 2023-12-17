@@ -20,9 +20,9 @@ use ecdsa::{
 
 use signature::Signer;
 
-pub trait EsDsaCurve: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression { }
+pub trait EsDsaCurve: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression {}
 
-impl<C> EsDsaCurve for C where C: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression, { }
+impl<C> EsDsaCurve for C where C: PrimeCurve + CurveArithmetic + DigestPrimitive + PointCompression {}
 
 pub struct EcDsaKey<C>
 where
